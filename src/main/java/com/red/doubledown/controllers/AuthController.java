@@ -2,15 +2,14 @@ package com.red.doubledown.controllers;
 
 
 import com.red.doubledown.config.JwtProvider;
-import com.red.doubledown.modal.TwoFactorAuth;
 import com.red.doubledown.modal.TwoFactorOTP;
 import com.red.doubledown.modal.User;
 import com.red.doubledown.repository.UserRepository;
 import com.red.doubledown.response.AuthResponse;
 import com.red.doubledown.service.CustomerUserDetailService;
+import com.red.doubledown.service.EmailService;
 import com.red.doubledown.service.TwoFactorOtpService;
 import com.red.doubledown.utils.OtpUtils;
-import org.hibernate.type.TrueFalseConverter;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -19,11 +18,7 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.core.userdetails.UserDetails;
-import org.springframework.security.core.userdetails.UserDetailsService;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/auth")
@@ -33,6 +28,8 @@ public class AuthController {
     private UserRepository userRepository;
     @Autowired
     private CustomerUserDetailService customerUserDetailService;
+    @Autowired
+    private EmailService emailService;
 
     @Autowired
     private TwoFactorOtpService twoFactorOtpService;
@@ -65,16 +62,26 @@ public class AuthController {
     public ResponseEntity<AuthResponse> login(@RequestBody User user) throws  Exception{
         String userName=user.getEmail();
         String password= user.getPassword();
+
         Authentication auth= authenticate(userName,password);
+
         SecurityContextHolder.getContext().setAuthentication(auth);
         String jwt=JwtProvider.generateToken(auth);
+        User authUser = userRepository.findByEmail(userName);
 
         if(user.getTwoFactorAuth().isEnabled()){
             AuthResponse res=new AuthResponse();
             res.setMessage("Two Factor Auth is Enabled");
             res.setTwofactorAuth(true);
-            String otp= OtpUtils.generateOTP();
-            TwoFactorOTP oldTwoFactorOtp=twoFactorOtpService.findByUser(user.getId());
+            String otp = OtpUtils.generateOTP();
+            TwoFactorOTP oldTwoFactorOtp=twoFactorOtpService.findByUser(authUser.getId());
+            if (oldTwoFactorOtp!=null){
+                twoFactorOtpService.deleteTwoFactorOtp(oldTwoFactorOtp);
+            }
+            TwoFactorOTP newTwoFactorOTP=twoFactorOtpService.createTwoFactorOtp(authUser,otp,jwt);
+            emailService.sendVerificationOtpEmail(userName,otp);
+            res.setSession(newTwoFactorOTP.getId());
+            return  new ResponseEntity<>(res,HttpStatus.ACCEPTED);
         }
         AuthResponse res=new AuthResponse();
 
@@ -95,6 +102,21 @@ public class AuthController {
         }
 
         return new UsernamePasswordAuthenticationToken(userDetails,password,userDetails.getAuthorities());
+    }
+
+    @PostMapping("/two-factor/otp/{otp}")
+    public ResponseEntity<AuthResponse> verifySigningOtp(@PathVariable String otp,@RequestParam String id) throws Exception {
+        TwoFactorOTP twoFactorOTP = twoFactorOtpService.findById(id);
+
+        if (twoFactorOtpService.verifyTwoFactorOtp(twoFactorOTP,otp)){
+            AuthResponse res=new AuthResponse();
+            res.setMessage("Two Factor Authentication verified");
+            res.setTwofactorAuth(true);
+            res.setJwt(twoFactorOTP.getJwt());
+            return new ResponseEntity<>(res,HttpStatus.OK);
+
+        }
+        throw new Exception("Invalid OTp");
     }
 
 }
