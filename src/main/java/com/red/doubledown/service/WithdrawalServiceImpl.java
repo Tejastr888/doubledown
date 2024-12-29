@@ -19,7 +19,7 @@ public class WithdrawalServiceImpl implements WithdrawalService{
     private WithdrawalRepository withdrawalRepository;
 
     @Override
-    public Withdrawal requestyWithdrawal(Long amount, User user) {
+    public Withdrawal requestWithdrawal(Long amount, User user) {
         Withdrawal withdrawal=new Withdrawal();
         withdrawal.setAmount(amount);
         withdrawal.setUser(user);
